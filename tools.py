@@ -33,15 +33,15 @@ class AVIFileLoader:
             # Default to grayscale
             return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    def display_frame(self, index, color_channel=None, v_min = None, v_max = None, xlim_l = None, xlim_u = None, ylim_l = None, ylim_u = None):
+    def display_frame(self, index, color_channel=None, v_min = None, v_max = None, x_up=None, x_down=None, y_left=None, y_right=None):
         """
         Display a specific frame using matplotlib.
         """
         frame = self.get_frame(index, color_channel)
         plt.figure(figsize=(8, 6))
         plt.imshow(frame, cmap='gray', aspect='auto', vmin=v_min, vmax=v_max)
-        plt.ylim(ylim_u, ylim_l)
-        plt.xlim(xlim_l, xlim_u)
+        plt.xlim(y_left, y_right)
+        plt.ylim(x_down, x_up)
         plt.title(f"Frame {index}")
         #plt.axis('off')
         plt.show()
@@ -71,8 +71,8 @@ def calculate_spatial_frequencies(frames, pixel_size):
         height, width = frame.shape
 
         # Spatial frequencies in pixel units
-        freq_x = np.fft.fftfreq(width, d=1)  # Horizontal frequencies
-        freq_y = np.fft.fftfreq(height, d=1)  # Vertical frequencies
+        freq_y = np.fft.fftfreq(width, d=1)  # Horizontal frequencies
+        freq_x = np.fft.fftfreq(height, d=1)  # Vertical frequencies
 
         # Convert to real-world units (cycles per unit distance)
         real_freq_x = freq_x / pixel_size
@@ -82,8 +82,8 @@ def calculate_spatial_frequencies(frames, pixel_size):
         fft_result = fft2(frame)
         magnitude = np.abs(fft_result)
         # Average across axes for horizontal and vertical components
-        horizontal_freq = magnitude[0,:]
-        vertical_freq = magnitude[:,0]
+        vertical_freq = np.array(magnitude[0,:])
+        horizontal_freq = np.array(magnitude[:,0])
         real_freq_x_l.append(real_freq_x)
         real_freq_y_l.append(real_freq_y)
         horizontal_mag_l.append(horizontal_freq)
@@ -146,18 +146,35 @@ def find_size(loader, x_up=0, x_down=-1, y_left=0, y_right=-1,color_channel=None
     plt.yticks(np.arange(0,window_frame.shape[0],step=int(window_frame.shape[0]/8)), np.arange(x_up,x_down,step=int(window_frame.shape[0]/8)))
     return x_up, x_down, y_left, y_right
 
-def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_right=-1, baseline_horizontal=0,baseline_vertical=0,start_frame=0, end_frame=100, average=20):
+def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_right=-1,start_frame=0, end_frame=100,v_min=None, v_max=None):
     frames = []
+    #test_frame = video_loader.get_frame(start_frame)[x_up:x_down, y_left:y_right]
+    ### set half of the frame to zero, the other half to 100
+    #test_frame[:,0:int(test_frame.shape[1]/2)] = 0
+    #test_frame[:,int(test_frame.shape[1]/2):] = 100
+    #frames.append(test_frame)
+    #plt.imshow(test_frame, cmap='gray', aspect='auto')
+    #plt.show()
+    plt.imshow(video_loader.get_frame(start_frame)[x_up:x_down, y_left:y_right], cmap='gray', aspect='auto')
+    plt.show()
     for i in tqdm.tqdm(range(start_frame,end_frame)): 
-        frame = video_loader.get_frame(i)
-        frames.append(frame[x_up:x_down, y_left:y_right])
-        
+        frame = video_loader.get_frame(i)[x_up:x_down, y_left:y_right]
+        frame[frame < v_min] = 0
+        frame[frame > v_max] = 255
+        if i == start_frame:
+            plt.imshow(frame, cmap='gray', aspect='auto')
+            plt.show()
+        frames.append(frame)
     frequencies, magnitudes = calculate_spatial_frequencies(frames, resolution)
     ### average n values in each folder of freqencies
+    return frequencies, magnitudes
+
+
+def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_vertical=0, average=20):
     for key in frequencies.keys():
     #plt.plot(frequencies[key], magnitudes[key], label=key)
-        frequencies[key] = np.array([np.mean(frequencies[key][i:i+20],axis=0) for i in range(0, len(frequencies[key]), average)])
-        magnitudes[key] = np.array([np.mean(magnitudes[key][i:i+20],axis=0) for i in range(0, len(magnitudes[key]), average)])
+        frequencies[key] = np.array([np.mean(frequencies[key][i:i+average],axis=0) for i in range(0, len(frequencies[key]), average)])
+        magnitudes[key] = np.array([np.mean(magnitudes[key][i:i+average],axis=0) for i in range(0, len(magnitudes[key]), average)])
 
     
     precomputed_differences = {
@@ -166,10 +183,6 @@ def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_ri
         "horizontal_freq": frequencies["horizontal"],
         "vertical_freq":  frequencies["vertical"]
     }
-    return precomputed_differences
-
-
-def fourier_animation(precomputed_differences):
     def update(frame_index):
         diff_h = precomputed_differences["horizontal_diff"][frame_index]
         diff_v = precomputed_differences["vertical_diff"][frame_index]
