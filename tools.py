@@ -49,7 +49,7 @@ class AVIFileLoader:
     def release(self):
         self.cap.release()
 
-def calculate_spatial_frequencies(frames, pixel_size):
+def calculate_spatial_frequencies(frames, pixel_size,min_wave_number=10):
     """
     Calculate spatial frequencies for a list of frames with scaling to real-world units.
 
@@ -71,8 +71,8 @@ def calculate_spatial_frequencies(frames, pixel_size):
         height, width = frame.shape
 
         # Spatial frequencies in pixel units
-        freq_y = np.fft.fftfreq(width, d=1)  # Horizontal frequencies
-        freq_x = np.fft.fftfreq(height, d=1)  # Vertical frequencies
+        freq_x = np.fft.fftfreq(width, d=min_wave_number/(pixel_size*2)) # Horizontal frequencies
+        freq_y = np.fft.fftfreq(height, d=1)  # Vertical frequencies
 
         # Convert to real-world units (cycles per unit distance)
         real_freq_x = freq_x / pixel_size
@@ -82,8 +82,8 @@ def calculate_spatial_frequencies(frames, pixel_size):
         fft_result = fft2(frame)
         magnitude = np.abs(fft_result)
         # Average across axes for horizontal and vertical components
-        vertical_freq = np.array(magnitude[0,:])
-        horizontal_freq = np.array(magnitude[:,0])
+        horizontal_freq = np.array(magnitude[0,:])
+        vertical_freq = np.array(magnitude[:,0])
         real_freq_x_l.append(real_freq_x)
         real_freq_y_l.append(real_freq_y)
         horizontal_mag_l.append(horizontal_freq)
@@ -146,7 +146,7 @@ def find_size(loader, x_up=0, x_down=-1, y_left=0, y_right=-1,color_channel=None
     plt.yticks(np.arange(0,window_frame.shape[0],step=int(window_frame.shape[0]/8)), np.arange(x_up,x_down,step=int(window_frame.shape[0]/8)))
     return x_up, x_down, y_left, y_right
 
-def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_right=-1,start_frame=0, end_frame=100,v_min=None, v_max=None):
+def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_right=-1,start_frame=0, end_frame=100,v_min=None, v_max=None, min_wave_number=10):
     frames = []
     #test_frame = video_loader.get_frame(start_frame)[x_up:x_down, y_left:y_right]
     ### set half of the frame to zero, the other half to 100
@@ -157,20 +157,20 @@ def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_ri
     #plt.show()
     plt.imshow(video_loader.get_frame(start_frame)[x_up:x_down, y_left:y_right], cmap='gray', aspect='auto')
     plt.show()
-    for i in tqdm.tqdm(range(start_frame,end_frame)): 
-        frame = video_loader.get_frame(i)[x_up:x_down, y_left:y_right]
-        frame[frame < v_min] = 0
-        frame[frame > v_max] = 255
-        if i == start_frame:
-            plt.imshow(frame, cmap='gray', aspect='auto')
-            plt.show()
-        frames.append(frame)
-    frequencies, magnitudes = calculate_spatial_frequencies(frames, resolution)
+    # Precompute slicing indices
+    x_slice = slice(x_up, x_down)
+    y_slice = slice(y_left, y_right)
+
+    # Use list comprehension to load frames
+    frames = [video_loader.get_frame(i)[x_slice, y_slice] for i in tqdm.tqdm(range(start_frame, end_frame))]
+    frequencies, magnitudes = calculate_spatial_frequencies(frames, resolution, min_wave_number)
     ### average n values in each folder of freqencies
     return frequencies, magnitudes
 
 
 def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_vertical=0, average=20):
+    frequencies = frequencies.copy()
+    magnitudes = magnitudes.copy()
     for key in frequencies.keys():
     #plt.plot(frequencies[key], magnitudes[key], label=key)
         frequencies[key] = np.array([np.mean(frequencies[key][i:i+average],axis=0) for i in range(0, len(frequencies[key]), average)])
@@ -192,15 +192,15 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
         # Update scatter plots
         horizontal_scatter.set_offsets(np.c_[freq_h, diff_h])
         vertical_scatter.set_offsets(np.c_[freq_v, diff_v])
-
+        # ax[0].set_title(f"Horizontal Fourier Transform (average of frames {frame_index * average}-{frame_index * average + average})")
         return horizontal_scatter, vertical_scatter
 
     # Create animations for horizontal and vertical frequencies
     fig, ax = plt.subplots(2, 1, figsize=(10, 8))
     # Scatter plot placeholders
     def init_func():
-        # ax[0].set_xlim(0,1)
-        # ax[0].set_ylim(1, 1e8)
+        ax[0].set_xlim(0,frequencies["horizontal"].max())
+        ax[0].set_ylim(precomputed_differences["horizontal_diff"].min()-1, precomputed_differences["horizontal_diff"].max()+1)
         ax[0].set_yscale('symlog', linthresh=0.1)  # Symmetric log scale for differences
         ax[0].set_title("Horizontal Fourier Transform")
         ax[0].set_xlabel("Freq (1/mm)")
@@ -208,8 +208,8 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
         ax[0].legend()
         ax[0].grid()
 
-        # ax[1].set_xlim(0, 1)
-        # ax[1].set_ylim(1, 1e8)
+        ax[1].set_xlim(0,frequencies["vertical"].max())
+        ax[1].set_ylim(precomputed_differences["vertical_diff"].min()-1, precomputed_differences["vertical_diff"].max()+1)
         ax[1].set_yscale('symlog', linthresh=0.1)  # Symmetric log scale for differences
         ax[1].set_title("Vertical Fourier Transform")
         ax[1].set_xlabel("Freq (1/mm)")
@@ -219,15 +219,9 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
 
     horizontal_scatter = ax[0].scatter([], [], label="Horizontal Difference", color="blue", s=1)
     vertical_scatter = ax[1].scatter([], [], label="Vertical Difference", color="red", s=1)
-    ax[1].set_xlim(0, 2)
-    ax[0].set_xlim(0, 2)
-    ax[0].set_ylim(precomputed_differences["horizontal_diff"].min()-1, precomputed_differences["horizontal_diff"].max()+1)
-    ax[1].set_ylim(precomputed_differences["vertical_diff"].min()-1, precomputed_differences["vertical_diff"].max()+1)
     ani = FuncAnimation(fig, update, frames=len(precomputed_differences["horizontal_diff"]), init_func=init_func, blit=False, repeat=True)
-    #plt.show()
+    # plt.show()
     return ani
-    
-
 
 
 import pandas as pd
