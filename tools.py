@@ -49,7 +49,7 @@ class AVIFileLoader:
     def release(self):
         self.cap.release()
 
-def calculate_spatial_frequencies(frames, pixel_size,min_wave_number=10):
+def calculate_spatial_frequencies(frames, pixel_size, min_wave_number):
     """
     Calculate spatial frequencies for a list of frames with scaling to real-world units.
 
@@ -71,7 +71,7 @@ def calculate_spatial_frequencies(frames, pixel_size,min_wave_number=10):
         height, width = frame.shape
 
         # Spatial frequencies in pixel units
-        freq_x = np.fft.fftfreq(width, d=min_wave_number/(pixel_size*2)) # Horizontal frequencies
+        freq_x = np.fft.fftfreq(width, d=1)) # Horizontal frequencies
         freq_y = np.fft.fftfreq(height, d=1)  # Vertical frequencies
 
         # Convert to real-world units (cycles per unit distance)
