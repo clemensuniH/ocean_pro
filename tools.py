@@ -71,7 +71,7 @@ def calculate_spatial_frequencies(frames, pixel_size, min_wave_number):
         height, width = frame.shape
 
         # Spatial frequencies in pixel units
-        freq_x = np.fft.fftfreq(width, d=1)) # Horizontal frequencies
+        freq_x = np.fft.fftfreq(width, d=1) # Horizontal frequencies
         freq_y = np.fft.fftfreq(height, d=1)  # Vertical frequencies
 
         # Convert to real-world units (cycles per unit distance)
@@ -168,7 +168,7 @@ def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_ri
     return frequencies, magnitudes
 
 
-def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_vertical=0, average=20):
+def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_vertical=0, average=20,xlim_up=0.2):
     frequencies = frequencies.copy()
     magnitudes = magnitudes.copy()
     for key in frequencies.keys():
@@ -199,11 +199,12 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
     fig, ax = plt.subplots(2, 1, figsize=(10, 8))
     # Scatter plot placeholders
     def init_func():
-        ax[0].set_xlim(0,frequencies["horizontal"].max())
-        ax[0].set_ylim(precomputed_differences["horizontal_diff"].min()-1, precomputed_differences["horizontal_diff"].max()+1)
+        ax[0].set_xlim(0,xlim_up)
+        #ax[0].set_ylim(precomputed_differences["horizontal_diff"].min()-1, precomputed_differences["horizontal_diff"].max()+1)
+        ax[0].set_ylim(5e3, 1e6)
         ax[0].set_yscale('symlog', linthresh=0.1)  # Symmetric log scale for differences
         ax[0].set_title("Horizontal Fourier Transform")
-        ax[0].set_xlabel("Freq (1/mm)")
+        ax[0].set_xlabel("Wavenumber k (1/mm)")
         ax[0].set_ylabel("Magnitude")
         ax[0].legend()
         ax[0].grid()
@@ -212,7 +213,7 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
         ax[1].set_ylim(precomputed_differences["vertical_diff"].min()-1, precomputed_differences["vertical_diff"].max()+1)
         ax[1].set_yscale('symlog', linthresh=0.1)  # Symmetric log scale for differences
         ax[1].set_title("Vertical Fourier Transform")
-        ax[1].set_xlabel("Freq (1/mm)")
+        ax[1].set_xlabel("Wavenumber k (1/mm)")
         ax[1].set_ylabel("Magnitude")
         ax[1].legend()
         ax[1].grid()
