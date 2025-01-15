@@ -146,40 +146,117 @@ def find_size(loader, x_up=0, x_down=-1, y_left=0, y_right=-1,color_channel=None
     plt.yticks(np.arange(0,window_frame.shape[0],step=int(window_frame.shape[0]/8)), np.arange(x_up,x_down,step=int(window_frame.shape[0]/8)))
     return x_up, x_down, y_left, y_right
 
-def fourier_analysis(video_loader, resolution, x_up=0, x_down=-1, y_left=0, y_right=-1,start_frame=0, end_frame=100,v_min=None, v_max=None, min_wave_number=10):
+def calculate_wavenumbers_1D(frames, pixel_size,detrend=False):
+    """
+    Calculate wavenumbers (spatial frequencies) for a list of frames with scaling to real-world units.
+
+    Args:
+        frames (list of np.ndarray): List of grayscale frames.
+        pixel_size (float): Size of each pixel in real-world units (e.g., mm or µm).
+
+    Returns:
+        dict: Contains horizontal and vertical wavenumbers and magnitudes for all frames.
+            - wavenumbers["horizontal"]: Average horizontal wavenumbers (1/unit distance).
+            - wavenumbers["vertical"]: Vertical wavenumbers (1/unit distance).
+            - magnitudes["horizontal"]: Average horizontal magnitude spectrum for each frame.
+            - magnitudes["vertical"]: Average vertical magnitude spectrum for each frame.
+    """
+    # Initialize lists to store results
+    wn_x_l = []  # Horizontal wavenumbers
+    wn_y_l = []  # Vertical wavenumbers
+    horizontal_mag_l = []  # Horizontal magnitudes
+    vertical_mag_l = []  # Vertical magnitudes
+
+    # Process each frame
+    for i,frame in tqdm.tqdm(enumerate(frames), desc="Processing frames"):
+        if detrend:
+            horizontal_avg = np.mean(frame, axis=0)
+            frame = frame - horizontal_avg
+            vertical_avg = np.mean(frame, axis=1)
+            frame = frame - vertical_avg[:, np.newaxis]
+
+        ### now set all outliers above 3 std to 0
+        std = np.std(frame)
+        frame[frame > 3*std] = 3*std
+        frame[frame < -3*std] = -3*std
+
+        if i == 0 or i == len(frames)-1:
+            c = plt.imshow(frame, cmap='coolwarm', aspect='auto')
+            plt.colorbar(c)
+            plt.title(f"Frame {i}")
+            plt.show()
+
+        # Frame dimensions
+        height, width = frame.shape
+
+        # Wavenumbers in pixel units
+        wn_x = np.fft.fftfreq(width, d=1) / pixel_size  # Horizontal wavenumbers
+        wn_y = np.fft.fftfreq(height, d=1) / pixel_size  # Vertical wavenumbers
+
+        # Horizontal wavenumbers: Fourier analysis for each row, then average
+        horizontal_magnitude = np.mean(np.abs(np.fft.fft(frame, axis=1)), axis=0)
+
+        # Vertical wavenumbers: Fourier analysis for each column, then average
+        vertical_magnitude = np.mean(np.abs(np.fft.fft(frame, axis=0)), axis=1)
+
+        # Append results for this frame
+        wn_x_l.append(wn_x)
+        wn_y_l.append(wn_y)
+        horizontal_mag_l.append(horizontal_magnitude)
+        vertical_mag_l.append(vertical_magnitude)
+
+    # Compile results into dictionaries
+    wavenumbers = {
+        "horizontal": np.array(wn_x_l),
+        "vertical": np.array(wn_y_l)}
+    magnitudes = {
+        "horizontal": np.array(horizontal_mag_l),
+        "vertical": np.array(vertical_mag_l)}
+
+    return wavenumbers, magnitudes
+
+
+
+def fourier_analysis(video_loader, pixel_size, x_up=0, x_down=-1, y_left=0, y_right=-1,start_frame=0, end_frame=100,detrend=False):
     frames = []
-    #test_frame = video_loader.get_frame(start_frame)[x_up:x_down, y_left:y_right]
-    ### set half of the frame to zero, the other half to 100
-    #test_frame[:,0:int(test_frame.shape[1]/2)] = 0
-    #test_frame[:,int(test_frame.shape[1]/2):] = 100
-    #frames.append(test_frame)
-    #plt.imshow(test_frame, cmap='gray', aspect='auto')
-    #plt.show()
-    plt.imshow(video_loader.get_frame(start_frame)[x_up:x_down, y_left:y_right], cmap='gray', aspect='auto')
-    plt.show()
     # Precompute slicing indices
     x_slice = slice(x_up, x_down)
     y_slice = slice(y_left, y_right)
 
     # Use list comprehension to load frames
     frames = [video_loader.get_frame(i)[x_slice, y_slice] for i in tqdm.tqdm(range(start_frame, end_frame))]
-    frequencies, magnitudes = calculate_spatial_frequencies(frames, resolution, min_wave_number)
+    frequencies, magnitudes = calculate_wavenumbers_1D(frames, pixel_size,detrend=detrend)
     ### average n values in each folder of freqencies
     return frequencies, magnitudes
 
 
-def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_vertical=0, average=20,xlim_up=0.2):
+def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_vertical=0, average=20):
     frequencies = frequencies.copy()
     magnitudes = magnitudes.copy()
     for key in frequencies.keys():
-    #plt.plot(frequencies[key], magnitudes[key], label=key)
-        frequencies[key] = np.array([np.mean(frequencies[key][i:i+average],axis=0) for i in range(0, len(frequencies[key]), average)])
-        magnitudes[key] = np.array([np.mean(magnitudes[key][i:i+average],axis=0) for i in range(0, len(magnitudes[key]), average)])
-
+        # Normalize magnitudes for each frame by the max magnitude of that frame
+        normalized_magnitudes = [
+            frame_magnitude / frame_magnitude.max() if frame_magnitude.max() != 0 else frame_magnitude
+            for frame_magnitude in magnitudes[key]
+        ]
+        
+        # Replace magnitudes[key] with normalized values
+        magnitudes[key] = np.array([
+            np.mean(normalized_magnitudes[i:i+average], axis=0) 
+            for i in range(0, len(normalized_magnitudes), average)
+        ])
+        
+        # Average the frequencies as usual
+        frequencies[key] = np.array([
+            np.mean(frequencies[key][i:i+average], axis=0) 
+            for i in range(0, len(frequencies[key]), average)
+        ])
+    baseline_vertical = baseline_vertical / baseline_vertical.max()
+    baseline_horizontal = baseline_horizontal / baseline_horizontal.max()
     
     precomputed_differences = {
-        "horizontal_diff": np.abs(magnitudes["horizontal"] - baseline_horizontal),
-        "vertical_diff": np.abs(magnitudes["vertical"] - baseline_vertical),
+        "horizontal_diff": magnitudes["horizontal"] - baseline_horizontal,
+        "vertical_diff": magnitudes["vertical"] - baseline_vertical,
         "horizontal_freq": frequencies["horizontal"],
         "vertical_freq":  frequencies["vertical"]
     }
@@ -199,9 +276,9 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
     fig, ax = plt.subplots(2, 1, figsize=(10, 8))
     # Scatter plot placeholders
     def init_func():
-        ax[0].set_xlim(0,xlim_up)
-        #ax[0].set_ylim(precomputed_differences["horizontal_diff"].min()-1, precomputed_differences["horizontal_diff"].max()+1)
-        ax[0].set_ylim(5e3, 1e6)
+        ax[0].set_xlim(0,frequencies["horizontal"].max())
+        ax[0].set_ylim(precomputed_differences["horizontal_diff"].min()*0.9,
+                        precomputed_differences["horizontal_diff"].max()*1.1)
         ax[0].set_yscale('symlog', linthresh=0.1)  # Symmetric log scale for differences
         ax[0].set_title("Horizontal Fourier Transform")
         ax[0].set_xlabel("Wavenumber k (1/mm)")
@@ -210,7 +287,8 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
         ax[0].grid()
 
         ax[1].set_xlim(0,frequencies["vertical"].max())
-        ax[1].set_ylim(precomputed_differences["vertical_diff"].min()-1, precomputed_differences["vertical_diff"].max()+1)
+        ax[1].set_ylim(precomputed_differences["vertical_diff"].min()*0.9,
+                       precomputed_differences["vertical_diff"].max()*1.1)
         ax[1].set_yscale('symlog', linthresh=0.1)  # Symmetric log scale for differences
         ax[1].set_title("Vertical Fourier Transform")
         ax[1].set_xlabel("Wavenumber k (1/mm)")
@@ -223,92 +301,3 @@ def fourier_animation(frequencies, magnitudes,baseline_horizontal=0,baseline_ver
     ani = FuncAnimation(fig, update, frames=len(precomputed_differences["horizontal_diff"]), init_func=init_func, blit=False, repeat=True)
     # plt.show()
     return ani
-
-
-import pandas as pd
-import xarray as xr
-
-class TemperatureProcessor:
-    def __init__(self, file_path):
-        self.file_path = file_path
-        self.data = None
-        self.dataset = None
-        self.z_positions = {
-            '03': np.arange(0, 15, 2),      # Stick 03: z = 0 to 14
-            '02': np.arange(1, 16, 2),      # Stick 02: z = 1 to 15
-            '01': np.arange(9.5, 24.5, 2), # Stick 01: z = 10.5 to 24.5
-            '00': np.arange(10.5, 25.5, 2)  # Stick 00: z = 11.5 to 25.5
-        }
-
-    def read_data(self):
-        """Reads and cleans the temperature data."""
-        columns = ['Time', 'Stick', 'ID', 'Timestamp'] + [f"Temp_{i}" for i in range(8)]
-        # Explicitly set Stick column as string during reading
-        self.data = pd.read_csv(
-            self.file_path,
-            sep=',|\t',
-            engine='python',
-            names=columns,
-            dtype={'Stick': str}
-        )
-
-        # Ensure Stick column has leading zeros (if accidentally stripped)
-        self.data['Stick'] = self.data['Stick'].apply(lambda x: x.zfill(2))
-
-        # Keep only required columns
-        self.data = self.data[['Time', 'Stick'] + [f"Temp_{i}" for i in range(8)]]
-
-    def process_data_to_xarray(self):
-        """Processes the data and stores it as an xarray.Dataset."""
-        time_groups = self.data[self.data['Stick'].isin(['00', '01', '02', '03'])].groupby('Time')
-
-        time_coords = []
-        stick_coords = ['00', '01', '02', '03']
-        z_coords = {stick: self.z_positions[stick] for stick in stick_coords}
-        temp_data = {stick: [] for stick in stick_coords}
-
-        for time, group in time_groups:
-            time_coords.append(time)
-            group = group.set_index('Stick')
-            for stick in stick_coords:
-                if stick in group.index:
-                    # Extract temperatures and pad to ensure correct shape
-                    temps = group.loc[stick, [f"Temp_{i}" for i in range(8)]].values.astype(float)
-                    temp_data[stick].append(temps)
-                else:
-                    # Pad with NaNs if stick data is missing for this timestamp
-                    temp_data[stick].append([np.nan] * 8)
-
-        # Convert to xarray Dataset
-        data_vars = {}
-        for stick in stick_coords:
-            data_vars[f"temperature_{stick}"] = (
-                ['time', 'z'],
-                np.array(temp_data[stick]),
-                {'description': f"Temperatures for stick {stick}"}
-            )
-
-        self.dataset = xr.Dataset(
-            data_vars=data_vars,
-            coords={
-                'time': time_coords,
-                'z_00': z_coords['00'],
-                'z_01': z_coords['01'],
-                'z_02': z_coords['02'],
-                'z_03': z_coords['03']
-            },
-            attrs={'description': 'Temperature time series processed into xarray Dataset'}
-        )
-
-    def get_dataset(self):
-        """Returns the xarray.Dataset."""
-        return self.dataset
-
-# Usage Example (Not implemented here):
-# file_path = 'temp.txt'
-# processor = TemperatureProcessor(file_path)
-# processor.read_data()
-# processor.process_data_to_xarray()
-# dataset = processor.get_dataset()
-# print(dataset)
-
