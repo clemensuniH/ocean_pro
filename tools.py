@@ -6,6 +6,7 @@ from scipy.fft import fft2, fftshift
 import tqdm
 from IPython.display import HTML
 from concurrent.futures import ThreadPoolExecutor
+from IPython.display import display
 
 class AVIFileLoader:
     def __init__(self, file_path):
